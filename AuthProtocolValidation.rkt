@@ -1,5 +1,5 @@
 #lang forge
-
+(require "NSPK.rkt")
 -- Message
 
 sig Message
@@ -64,18 +64,6 @@ sig AuthProtocol {
 	action: set Status->Message->User 			-- Status,  message, receiver,
 	nextStep: set Step->Step
 	initStep: one Step
-}
-
-pred initProtocol[hasMessages: set User->Message]{ -- some common knowledge
-
-}
-
-pred initValidStatus{
-
-}
-
-pred initAction{
-
 }
 
 pred initiateAuth[nextStatus: Status, claimer: User,claimed: User, validator: User, messagesToSent: Set User->Message->User]{
@@ -144,7 +132,7 @@ state[State] initState{
 }
 
 transition[State] processState{
-
+	initValidStatus
 	-- remove finishedStatus
 	one finalStep : finalStep->finalStep in AuthProtocol.nextStep | {
 		-- this step is final_step
