@@ -86,7 +86,7 @@ pred initProtocol[hasMessages: User->Message]{ -- some common knowledge
 pred regulateStep3[step: Step, hasMessages: User->Message]{
 	all status : Status | status.curStep = step => {
 		one inMessage : EncryptedMessage | 
-		one plaintext : Message | {
+		one plaintext : RandomNumber | {
 		
 			-- in Message Structure
 			encryptMessage[inMessage, plaintext, belongs.(status.sender)]
@@ -107,8 +107,8 @@ pred regulateStep2[step: Step, hasMessages: User->Message]{
 		one outMessage : EncryptedMessage | 
 		one inMessage : EncryptedMessage | 
 		one innerMessage : ComposedMessage |
-		one plaintext : Message |
-		one plaintext2 : Message | {
+		one plaintext : RandomNumber |
+		one plaintext2 : RandomNumber | {
 		
 			-- in Message Structure
 			encryptMessage[inMessage,innerMessage,belongs.(status.sender)]
@@ -151,7 +151,7 @@ pred regulateStep1[step: Step, hasMessages: User->Message]{
 		}
 			
 	}	
-	--regulateStep2[step.(AuthProtocol.nextStep), hasMessages]
+	regulateStep2[step.(AuthProtocol.nextStep), hasMessages]
 }
 
 -- Alice send encrypted data to Bob
@@ -168,7 +168,7 @@ pred regulateStep0[step: Step, hasMessages: User->Message]{
                         status.(AuthProtocol.validStatus) = plaintext
 		}
 	}
-	--regulateStep1[step.(AuthProtocol.nextStep), hasMessages]
+	regulateStep1[step.(AuthProtocol.nextStep), hasMessages]
 }
 
 pred initValidStatus[hasMessages: User->Message]{
@@ -294,7 +294,7 @@ transition[State] processState{
                                 defaultAbility[message, curStatus.receiver.hasMessages + (curStatus.sender).sentMessages.(curStatus.receiver)]
 
                                 some sender: User | some message: Message | some receiver: User | {
-                                    protocolExecution[nextStatus, curStatus, message, sender->message->receiver]
+                                    --protocolExecution[nextStatus, curStatus, message, sender->message->receiver]
                                     sender->message->receiver in sentMessages'
                                 } 
                         }
@@ -353,5 +353,5 @@ pred Secure{
 
 trace<|State, initState, processState, _|> authMachine {}
 
-run <|authMachine|> {}  for  exactly 5 User, exactly 5 Key, exactly 2 State, exactly 8 EncryptedMessage, exactly 8 ComposedMessage, exactly 5 RandomNumber, exactly 26 Message
+run <|authMachine|> {}  for  exactly 5 User, exactly 5 Key, exactly 6 State, exactly 8 EncryptedMessage, exactly 8 ComposedMessage, exactly 5 RandomNumber, exactly 26 Message
 
