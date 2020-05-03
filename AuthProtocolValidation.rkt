@@ -65,6 +65,10 @@ sig Step{
 
 one sig initStep extends Step{}
 
+pred finalStep[step: Step]{
+    step.nextStep = step
+}
+
 sig Status{
 	-- protocol status metadata
 	claimedAuth : one User->User, -- claimer, claimed
@@ -79,18 +83,12 @@ sig Status{
         outMsg : one Message
 }
 
-pred initiateAuth[nextStatus: Status, claimer: User,claimed: User, validator: User]{
-	nextStatus.claimedAuth = claimer->claimed
-	nextStatus.curStep = initStep
-	nextStatus.sender = claimer
-	nextStatus.receiver = validator
-}
-
 pred protocolExecution [nextStatus: Status, curStatus: Status, receivedMessages: NetworkFlow]{
     some flow: destination.(curStatus.receiver) & receivedMessages | {
        flow.msg = curStatus.inMsg
        flow.source = curStatus.sender
      } => {
+                curStatus.claimedAuth = nextStatus.claimedAuth
 		nextStatus.curStep = curStatus.curStep.nextStep
 		nextStatus.sender = curStatus.receiver
 		nextStatus.receiver = curStatus.sender
@@ -110,6 +108,7 @@ pred regulateStep0[step: Step, hasMessages: User->Message]{
                 status.inMsg in RandomMessage & status.sender.hasMessages
                 encryptMessage[status.outMsg, status.inMsg, belongs.(status.receiver)]
 	}
+        not finalStep[step]
 	
 }
 
@@ -129,24 +128,27 @@ pred regulateStep1[step: Step, hasMessages: User->Message]{
                 composeMessage[innerMessage, plaintext, plaintext2]
                 encryptMessage[status.outMsg, innerMessage, belongs.(status.receiver)]
              }
-	}	
+	}
+        not finalStep[step]
 }
 
 -- Alice check if her random number is returned and reply with Bob's randon num to Bob
 pred regulateStep2[step: Step, hasMessages: User->Message]{
 	all status : curStep.step | {
-             one innerMessage : ComposedMessage |
-             one plaintext : RandomMessage & status.sender.hasMessages |
-	     one plaintext2 : RandomMessage | {
+             some innerMessage : ComposedMessage |
+             some plaintext : RandomMessage & status.sender.hasMessages |
+	     some plaintext2 : RandomMessage | {
 		-- in Message Structure
-		composeMessage[innerMessage, plaintext, plaintext2]
 		encryptMessage[status.inMsg, innerMessage,belongs.(status.sender)]
+                --innerMessage.subMessage1 = plaintext
+		composeMessage[innerMessage, plaintext, plaintext2]
 			
 		-- out Message Structure
 		encryptMessage[status.outMsg, plaintext2, belongs.(status.receiver)]	
 	
 	     }
 	}
+        not finalStep[step]
 }
 
 -- Alice check if his random number is returned
@@ -159,7 +161,7 @@ pred regulateStep3[step: Step, hasMessages: User->Message]{
 		
 	
 	}
-	step.nextStep = step -- final step
+        finalStep[step]	 -- final step
 }
 
 pred initProtocol[hasMessages: User->Message]{ -- some common knowledge
@@ -236,23 +238,26 @@ transition[State] processState{
 	--no finishedStatus'
 	--authAs' = User->User->Stranger
 	--no sentMessages'
-	--no receivedMessages'
+        --no receivedMessages'
 	--no interceptedMessages'
         --no hasMessages'
+
+        all curStatus : status | {
+            finalStep[curStatus.curStep] => curStatus in finishedStatus'
+        }
         
-	one finalStep : Step | {
-                finalStep.nextStep = finalStep
-		-- this step is final_step
-		finishedStatus' = curStep.finalStep & status
-	}
+
+        
         
 	-- add newStatus
-        some newStatus' => newStatus'.curStep =  initStep 						-- only initStep allowed in new status	
+        some newStatus'
+        newStatus'.curStep =  initStep 						-- only initStep allowed in new status	
 	
 	all initStatus : newStatus' - sender.Attacker | {
+                initStatus.sender = initStatus.claimedAuth.User             -- claimed for themselves
 		initStatus.claimedAuth.User = User.(initStatus.claimedAuth) -- user are honest
 		no initStatus.sender & initStatus.receiver 		    -- no need for self auth
-		initStatus.receiver->initStatus.sender in authAs'.Stranger  -- no need for authed user
+		initStatus.receiver->initStatus.sender in authAs'.Stranger  -- no need for authed user8
                 
 	}
 	newStatus' in status'
@@ -320,6 +325,11 @@ pred success[authAs: User->(User->User)]{
 pred SuccessVerify{
     some curState : State | {
          success[curState.authAs]
+         /*
+         some step: Step - initStep -initStep.nextStep - initStep.nextStep.nextStep | some curStatus: curState.status & sender.(User - Attacker) | {
+             curStatus.curStep = step
+         }
+         */
     }
 }
 
@@ -336,12 +346,12 @@ pred DefaultSetting{
         all step: Step | {
             step in initStep.*nextStep
         }
-
         -- one final step
-        one step: Step | {
-            step = step
-        }
-        
+        one step: Step | finalStep[step]
+
+        -- Stanger is just a signiture
+        no Stranger & Status.sender 
+        no Stranger & Status.receiver
         Message =  EncryptedMessage + ComposedMessage + RandomMessage + Key
 }
 
@@ -349,5 +359,5 @@ trace<|State, initState, processState, _|> authMachine {
     DefaultSetting
 }
 
-run <|authMachine|> {}  for  exactly 5 User, exactly 5 Key, exactly 5 State, exactly 6 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message
+run <|authMachine|> {SuccessVerify}  for  exactly 5 User, exactly 5 Key, exactly 7 State, exactly 10 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message, exactly 20 NetworkFlow
 
