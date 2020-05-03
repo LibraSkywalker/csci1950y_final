@@ -9,13 +9,20 @@ sig Key extends Message{
 }
 
 sig ComposedMessage extends Message{
-	subMessage: one Message->Message
+    subMessage1: one Message,
+    subMessage2: one Message
 }
 sig EncryptedMessage extends Message{
-	content: one Key->Message
+    content: one Key->Message
 }
 
-sig RandomNumber extends Message{}
+sig RandomMessage extends Message{}
+
+sig NetworkFlow {
+    source : one User,
+    destination : one User,
+    msg : one Message
+}
 
 -- Role
 
@@ -26,33 +33,38 @@ one sig Stranger extends User{}
 one sig Attacker extends User{}
 
 pred composeMessage[mC: ComposedMessage, m1: Message, m2: Message]{
-	mC.subMessage = m1->m2
+	mC.subMessage1 = m1
+        mC.subMessage2 = m2
 }
 
-pred encryptMessage[mE: EncryptedMessage, mP: Message, k: Key]{
-	mE.content = k.paired->mP
+pred encryptMessage[mE: EncryptedMessage, mP: Message, encryptKey: Key]{
+	mE.content = encryptKey.paired -> mP
 }
 
-pred UniqueMessage[m: one RandomNumber, u: User, hasMessages: User->Message]{
-	m in u.hasMessages
-	no m & (User - u).hasMessages
-}
-
-pred defaultAbility[totalMessage: Message, rawMessage: Message]{
-       (totalMessage & ComposedMessage).subMessage in totalMessage->totalMessage
-       (totalMessage & EncryptedMessage).content in (totalMessage & Key).paired->totalMessage
-	totalMessage = rawMessage
-				+ (totalMessage & ComposedMessage).subMessage.Message 				-- decompose
-				+ Message.((totalMessage & ComposedMessage).subMessage) 			-- decompose
-				+ (totalMessage & Key).((totalMessage & EncryptedMessage).content) 	-- decrypt
-                                + totalMessage & ComposedMessage
-			--	+ subMessage.(totalMessage->totalMessage) 							-- compose
-				+ totalMessage & EncryptedMessage 			-- encrypt
+pred synthesize[processedMessage: Message, rawMessage: Message]{
+       let curComposed = (processedMessage & ComposedMessage) |
+       let curEncrypt = (processedMessage & EncryptedMessage) | {
+           curComposed.subMessage1 in processedMessage                        --  Compose
+           curComposed.subMessage2 in processedMessage                        --  Compose
+           curEncrypt.content in (processedMessage & Key) -> processedMessage --  Encrypt
+           processedMessage = rawMessage
+                        + curComposed.subMessage1                             -- Decompose
+                        + curComposed.subMessage2                             -- Decompose
+                        + (processedMessage & Key).(curEncrypt.content)       -- Decrypt
+                        + curEncrypt                                          -- Encrypt
+                        + curComposed                                         -- Compose
+      }
 }
 
 -- Protocol
 
-sig Step{}
+-- abstract protocol
+sig Step{
+    nextStep: one Step
+}
+
+one sig initStep extends Step{}
+
 sig Status{
 	-- protocol status metadata
 	claimedAuth : one User->User, -- claimer, claimed
@@ -60,7 +72,94 @@ sig Status{
 	
 	-- last update
 	sender : one User,
-	receiver : one User
+	receiver : one User,
+
+        -- Messages
+        inMsg : one Message,
+        outMsg : one Message
+}
+
+pred initiateAuth[nextStatus: Status, claimer: User,claimed: User, validator: User]{
+	nextStatus.claimedAuth = claimer->claimed
+	nextStatus.curStep = initStep
+	nextStatus.sender = claimer
+	nextStatus.receiver = validator
+}
+
+pred protocolExecution [nextStatus: Status, curStatus: Status, receivedMessages: NetworkFlow]{
+    some flow: destination.(curStatus.receiver) & receivedMessages | {
+       flow.msg = curStatus.inMsg
+       flow.source = curStatus.sender
+     } => {
+		nextStatus.curStep = curStatus.curStep.nextStep
+		nextStatus.sender = curStatus.receiver
+		nextStatus.receiver = curStatus.sender
+                nextStatus.inMsg = curStatus.outMsg
+     } else {
+            nextStatus = curStatus
+     }
+}
+
+
+-- concrete protocol (NSPK)
+
+-- Alice encrypt a random num with Bob's key, send to Bob
+pred regulateStep0[step: Step, hasMessages: User->Message]{
+	all status: curStep.step | {
+                -- out Message Structure
+                status.inMsg in RandomMessage & status.sender.hasMessages
+                encryptMessage[status.outMsg, status.inMsg, belongs.(status.receiver)]
+	}
+	
+}
+
+
+
+-- Bob decrypt a random num, and append a random num afterward and encrypt with Alice's key, send to Alice
+
+pred regulateStep1[step: Step, hasMessages: User->Message]{
+	all status : curStep.step | {
+             one innerMessage : ComposedMessage |
+             some plaintext : RandomMessage - status.sender.hasMessages | 
+             one plaintext2: RandomMessage & status.sender.hasMessages | {
+                 -- in Message Structure
+		encryptMessage[status.inMsg, plaintext, belongs.(status.sender)]
+
+                -- out Message Structure
+                composeMessage[innerMessage, plaintext, plaintext2]
+                encryptMessage[status.outMsg, innerMessage, belongs.(status.receiver)]
+             }
+	}	
+}
+
+-- Alice check if her random number is returned and reply with Bob's randon num to Bob
+pred regulateStep2[step: Step, hasMessages: User->Message]{
+	all status : curStep.step | {
+             one innerMessage : ComposedMessage |
+             one plaintext : RandomMessage & status.sender.hasMessages |
+	     one plaintext2 : RandomMessage | {
+		-- in Message Structure
+		composeMessage[innerMessage, plaintext, plaintext2]
+		encryptMessage[status.inMsg, innerMessage,belongs.(status.sender)]
+			
+		-- out Message Structure
+		encryptMessage[status.outMsg, plaintext2, belongs.(status.receiver)]	
+	
+	     }
+	}
+}
+
+-- Alice check if his random number is returned
+pred regulateStep3[step: Step, hasMessages: User->Message]{
+	all status : curStep.step | {
+		one plaintext : RandomMessage & status.sender.hasMessages | {
+			-- in Message Structure
+			encryptMessage[status.inMsg, plaintext, belongs.(status.sender)]
+		}
+		
+	
+	}
+	step.nextStep = step -- final step
 }
 
 pred initProtocol[hasMessages: User->Message]{ -- some common knowledge
@@ -68,10 +167,14 @@ pred initProtocol[hasMessages: User->Message]{ -- some common knowledge
 	all key : Key | {
 		key.paired = key
 	}
-        
+
         all user : User | {
             one key : Key | {
                 key.belongs = user
+            }
+            one random : RandomMessage | {
+                random in user.hasMessages
+                random not in (User - user).hasMessages
             }
         }
 	
@@ -79,149 +182,21 @@ pred initProtocol[hasMessages: User->Message]{ -- some common knowledge
 	all user : User | {
 		Key in user.hasMessages
 	}
-}
 
--- Bob receive an encrypted data, and add
-
-pred regulateStep3[step: Step, hasMessages: User->Message]{
-	all status : Status | status.curStep = step => {
-		one inMessage : EncryptedMessage | 
-		one plaintext : RandomNumber | {
-		
-			-- in Message Structure
-			encryptMessage[inMessage, plaintext, belongs.(status.sender)]
-			
-			plaintext in (status.sender).hasMessages
-			
-			status->inMessage in AuthProtocol.validStatus
-			
-		}
-		
-	
-	}
-	step.(AuthProtocol.nextStep) = step -- final step
-}
-
-pred regulateStep2[step: Step, hasMessages: User->Message]{
-	all status : Status | status.curStep = step => {
-		one outMessage : EncryptedMessage | 
-		one inMessage : EncryptedMessage | 
-		one innerMessage : ComposedMessage |
-		one plaintext : RandomNumber |
-		one plaintext2 : RandomNumber | {
-		
-			-- in Message Structure
-			encryptMessage[inMessage,innerMessage,belongs.(status.sender)]
-			composeMessage[innerMessage, plaintext, plaintext2]
-			
-			
-			plaintext in (status.sender).hasMessages
-			
-			
-			-- out Message Structure
-			encryptMessage[outMessage, plaintext2, belongs.(status.receiver)]
-			
-			status->inMessage in AuthProtocol.validStatus
-			status->outMessage->(status.receiver) in AuthProtocol.action
-		}
-		
-	
-	}
-	regulateStep3[step.(AuthProtocol.nextStep), hasMessages]
-}
-
-pred regulateStep1[step: Step, hasMessages: User->Message]{
-	all status : Status | status.curStep = step => {
-		status.curStep = step
-                one outMessage : EncryptedMessage | 
-		one innerMessage : ComposedMessage |
-		one inMessage : EncryptedMessage | 
-		one plaintext : RandomNumber - status.sender.hasMessages | 
-		one plaintext2: RandomNumber | {
-                        UniqueMessage[plaintext2, status.sender, hasMessages]
-			-- in Message Structure
-			encryptMessage[inMessage, plaintext, belongs.(status.sender)]
-			
-			-- out Message Structure
-			composeMessage[innerMessage, plaintext, plaintext2]
-			encryptMessage[outMessage, innerMessage, belongs.(status.receiver)]
-			
-			status->inMessage in AuthProtocol.validStatus
-			status->outMessage->(status.receiver) in AuthProtocol.action
-		}
-			
-	}	
-	regulateStep2[step.(AuthProtocol.nextStep), hasMessages]
-}
-
--- Alice send encrypted data to Bob
-pred regulateStep0[step: Step, hasMessages: User->Message]{
-	all status : Status | status.curStep = step =>{
-		status.claimedAuth.User = status.sender
-	
-		one outMessage : EncryptedMessage | 
-		one plaintext : RandomNumber | {
-                        UniqueMessage[plaintext, status.sender, hasMessages]
-                        encryptMessage[outMessage, plaintext, belongs.(status.receiver)]
-
-                        status.(AuthProtocol.action) = outMessage->(status.receiver)
-                        status.(AuthProtocol.validStatus) = plaintext
-		}
-	}
-	regulateStep1[step.(AuthProtocol.nextStep), hasMessages]
-}
-
-pred initValidStatus[hasMessages: User->Message]{
-	all step: AuthProtocol.initStep.*(AuthProtocol.nextStep) | {
-		step not in step.^(AuthProtocol.nextStep)
-	}
-	regulateStep0[AuthProtocol.initStep, hasMessages]
-}
-
-one sig AuthProtocol {
-	validStatus	: set Status->Message,
-	action: set Status->Message->User, 			-- Status,  message, receiver,
-	nextStep: set Step->Step,
-	initStep: one Step
-}
-
-pred initiateAuth[nextStatus: Status, claimer: User,claimed: User, validator: User, messagesToSent: Networkflow]{
-	nextStatus.claimedAuth = claimer->claimed
-	nextStatus.curStep = AuthProtocol.initStep
-	nextStatus.sender = claimer
-	nextStatus.receiver = User
-	no messagesToSent
-}
-
-pred protocolExecution [nextStatus: Status, curStatus: Status, message: Message, messagesToSent: User->Message->User]{
-    
-	no msg : message & curStatus.(AuthProtocol.validStatus) | {
-		nextStatus = curStatus => no messagesToSent
-		else { -- The status is intercepted and redirect to the attacker
-			DolevProtocolIntercept[nextStatus, curStatus]
-			no messagesToSent
-		}
-		
-	}
- 
-	some message & curStatus.(AuthProtocol.validStatus) => {
-		nextStatus.curStep = curStatus.curStep.(AuthProtocol.nextStep)
-		nextStatus.sender = curStatus.receiver
-		nextStatus.receiver = curStatus.sender
-		nextStatus.receiver = Message.(curStatus.(AuthProtocol.action))
-                let message = curStatus.(AuthProtocol.action).User |
-                let user = Message.(curStatus.(AuthProtocol.action)) |
-		messagesToSent = curStatus.receiver->message->user
-	}
-
+        -- regulate steps
+        regulateStep0[initStep, hasMessages]
+        regulateStep1[initStep.nextStep, hasMessages]
+        regulateStep2[initStep.nextStep.nextStep, hasMessages]
+        regulateStep3[initStep.nextStep.nextStep.nextStep, hasMessages]
+        
 }
 
 -- Attacker
 
-pred DolevYaoAttacker[totalMessage: Message, interceptedMessages: User->Message->User, sentMessages: User->Message->User, rawMessage: Message]{
-	interceptedMessages in sentMessages 								-- intercept
-	defaultAbility[totalMessage, rawMessage + User.sentMessages.User]	-- overhear and synthesize
-	Attacker.sentMessages.User in rawMessage							-- inject
+pred DolevYaoAttacker[totalMessage: Message, interceptedMessages: NetworkFlow, sentMessages: NetworkFlow, rawMessage: Message]{
+	interceptedMessages in sentMessages 				-- intercept
+        synthesize[totalMessage, rawMessage + sentMessages.msg]	        -- overhear and synthesize
+        ((Attacker.source) & sentMessages).msg in rawMessage            -- inject			
 }
 
 pred DolevProtocolIntercept[nextStatus: Status, curStatus: Status]{
@@ -234,13 +209,13 @@ pred DolevProtocolIntercept[nextStatus: Status, curStatus: Status]{
 -- Exectution
 
 sig State {
-	status 				: set Status,
-	newStatus			: set Status,
+	status 			: set Status,
+	newStatus		: set Status,
 	finishedStatus		: set Status,
-	authAs				: set User->User->User,  	-- receiver, sender, claimed_auth
-	sentMessages 		: set User->Message->User, 	-- sender, message, receiver
-	receivedMessages 	: set User->Message->User,	-- sender, message, receiver
-	interceptedMessages : set User->Message->User,	-- sender, message, receiver
+	authAs			: set User->User->User,  	-- receiver, sender, claimed_auth
+	sentMessages 		: set NetworkFlow, 	-- sender, message, receiver
+	receivedMessages 	: set NetworkFlow,	-- sender, message, receiver
+	interceptedMessages     : set NetworkFlow,	-- sender, message, receiver
 	hasMessages 		: set User->Message
 }
 
@@ -252,7 +227,7 @@ state[State] initState{
 	no sentMessages
 	no receivedMessages
 	no interceptedMessages
-	initProtocol[hasMessages]
+        initProtocol[hasMessages]
 }
 
 transition[State] processState{
@@ -264,49 +239,39 @@ transition[State] processState{
 	--no receivedMessages'
 	--no interceptedMessages'
         --no hasMessages'
-        initValidStatus[hasMessages]
         
 	one finalStep : Step | {
-                finalStep->finalStep in AuthProtocol.nextStep
+                finalStep.nextStep = finalStep
 		-- this step is final_step
 		finishedStatus' = curStep.finalStep & status
 	}
         
 	-- add newStatus
-        some newStatus' => newStatus'.curStep =  AuthProtocol.initStep 						-- only initStep allowed in new status	
-	
-   
+        some newStatus' => newStatus'.curStep =  initStep 						-- only initStep allowed in new status	
 	
 	all initStatus : newStatus' - sender.Attacker | {
 		initStatus.claimedAuth.User = User.(initStatus.claimedAuth) -- user are honest
-		no initStatus.sender & initStatus.receiver 					-- no need for self auth
-		initStatus.receiver->initStatus.sender in authAs'.Stranger 	-- no need for authed user
+		no initStatus.sender & initStatus.receiver 		    -- no need for self auth
+		initStatus.receiver->initStatus.sender in authAs'.Stranger  -- no need for authed user
+                
 	}
 	newStatus' in status'
 	no finishedStatus' & status'
 	
-	-- constraints for status' and sentMessages'
+	-- constraints for status'
 	all nextStatus: status' - newStatus' | {
-		no nextStatus.sender & nextStatus.receiver -- trapped
-		one curStatus: status {
-			nextStatus
-			some message : Message | {
-                                defaultAbility[message, curStatus.receiver.hasMessages + (curStatus.sender).sentMessages.(curStatus.receiver)]
-
-                                some sender: User | some message: Message | some receiver: User | {
-                                    --protocolExecution[nextStatus, curStatus, message, sender->message->receiver]
-                                    sender->message->receiver in sentMessages'
-                                } 
-                        }
-		} 
+              some curStatus: status {
+                      --synthesize[totalMessage, curStatus.sender.hasMessages]
+                      protocolExecution[nextStatus, curStatus, receivedMessages']
+	      } 
 	}
-	all user: (User - Attacker) | all message : user.sentMessages.User |
-		some curStatus : status | {
-			curStatus.receiver = user
-			message in curStatus.(AuthProtocol.action).User	-- sent required message for protocol only
-		}
 
-        
+        -- constraints for sentMessages'
+        all nextStatus: status'  | some flow : sentMessages' | {
+            nextStatus.outMsg = flow.msg
+            nextStatus.sender = flow.source
+            nextStatus.receiver = flow.destination
+        }   
 	
         -- constraints for authAs'
         all alice: User | all bob: User | {
@@ -326,7 +291,7 @@ transition[State] processState{
 	
 	-- constraints for hasMessages'
 	all user : User - Attacker {
-		user.hasMessages' = user.hasMessages + User.receivedMessages'.user
+		synthesize[user.hasMessages', user.hasMessages + receivedMessages'.msg]
 	}
 	
         
@@ -345,13 +310,44 @@ pred ManInTheMiddleAttack[authAs: User->(User->User)]{
       }
 }
 
+pred success[authAs: User->(User->User)]{
+    some alice : User - Stranger - Attacker | some bob :  User - Stranger - Attacker - alice | {
+        bob->bob in alice.authAs
+        alice->alice in bob.authAs
+    }
+}
+
+pred SuccessVerify{
+    some curState : State | {
+         success[curState.authAs]
+    }
+}
+
 pred Secure{
     all curState : State | {
         not ManInTheMiddleAttack[curState.authAs]
     }
 }
 
-trace<|State, initState, processState, _|> authMachine {}
+-- Configuration
 
-run <|authMachine|> {}  for  exactly 5 User, exactly 5 Key, exactly 6 State, exactly 8 EncryptedMessage, exactly 8 ComposedMessage, exactly 5 RandomNumber, exactly 26 Message
+pred DefaultSetting{
+        -- make step linear
+        all step: Step | {
+            step in initStep.*nextStep
+        }
+
+        -- one final step
+        one step: Step | {
+            step = step
+        }
+        
+        Message =  EncryptedMessage + ComposedMessage + RandomMessage + Key
+}
+
+trace<|State, initState, processState, _|> authMachine {
+    DefaultSetting
+}
+
+run <|authMachine|> {}  for  exactly 5 User, exactly 5 Key, exactly 5 State, exactly 6 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message
 
