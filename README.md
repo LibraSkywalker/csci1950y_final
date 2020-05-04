@@ -6,6 +6,15 @@ The development is base on the resource from [UCSD](https://cseweb.ucsd.edu/clas
 
 We are going to determine whether the different authentication protocols have potential vulnerability with the Dolev-Yao attacker model.
 
+After communication with our mentor Sarah, we make some changes for the origin proposal.
+
+First, our foundation goal change to make sure the communication between different users(sender, receiver, attack) and the user also could send composed message and encrypted message with each other.
+
+Second, our target goal will be implement the NSPK which is a famous and basic protocol and prove the it will have potential vulnerability with the Dolev-Yao attacker model.
+
+Third, our reach goal became to implement a more complex protocol and prove the it will have potential vulnerability with the Dolev-Yao attacker model.
+
+
 In our model, it will have three users (sender, receiver, attacker). The sender will send different messages to the receiver. The receiver will get the message from the sender and send back the message. The attacker will try to intercept the message from the sender or receiver. What we try to prove is that attacker could intercept the message and decode it.
 
 For the attacker, we made it could intercept all message from both sides(sender and receiver), it also could store all the messages that it intercepts, it also could send the intercepted message and its own constructed message. And the Attacker will be valid in the system and not been exposed.
