@@ -23,4 +23,6 @@ B &#8594; A: K<sub>A</sub>{N<sub>B</sub>, B}
 
 A &#8594; B: K<sub>B</sub>{N<sub>B</sub>}
 
-For this protocol, N is the message, and K will be the public key. We are trying to see if the attacker could get the N.
+For this protocol, N is the message, and K will be the public key. We are trying to see if the attacker could get the message N.
+
+For the reach goal, we try to develop a more complex protocol, however, more complex protocol needs more state transaction, it also need more memory, but we already reach the limit for the forge's virtual memory and we can not run a more complex model.
