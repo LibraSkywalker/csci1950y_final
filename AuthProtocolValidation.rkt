@@ -366,8 +366,6 @@ pred DefaultSetting{
         no Stranger & Status.sender 
         no Stranger & Status.receiver
 
-        no Attacker &  Status.sender 
-        no Attacker & Status.receiver
         Message =  EncryptedMessage + ComposedMessage + RandomMessage + Key
 }
 
