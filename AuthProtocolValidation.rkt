@@ -83,18 +83,21 @@ sig Status{
         outMsg : one Message
 }
 
+
+sig StatusChange{
+   linkage: set Status->Status
+}
+
+
 pred protocolExecution [nextStatus: Status, curStatus: Status, receivedMessages: NetworkFlow]{
     some flow: destination.(curStatus.receiver) & receivedMessages | {
        flow.msg = curStatus.inMsg
        flow.source = curStatus.sender
-     } => {
-                curStatus.claimedAuth = nextStatus.claimedAuth
-		nextStatus.curStep = curStatus.curStep.nextStep
-		nextStatus.sender = curStatus.receiver
-		nextStatus.receiver = curStatus.sender
-                nextStatus.inMsg = curStatus.outMsg
-     } else {
-            nextStatus = curStatus
+       curStatus.claimedAuth = nextStatus.claimedAuth
+       nextStatus.curStep = curStatus.curStep.nextStep
+       nextStatus.sender = curStatus.receiver
+       nextStatus.receiver = curStatus.sender
+       nextStatus.inMsg = curStatus.outMsg
      }
 }
 
@@ -242,16 +245,18 @@ transition[State] processState{
 	--no interceptedMessages'
         --no hasMessages'
 
-        all curStatus : status | {
-            finalStep[curStatus.curStep] => curStatus in finishedStatus'
-        }
-        
+        -- check finished Status
+  
 
-        
-        
+        all nextStatus : finishedStatus' | {
+             finalStep[nextStatus.curStep]
+             nextStatus in status
+        }
+
 	-- add newStatus
-        some newStatus'
-        newStatus'.curStep =  initStep 						-- only initStep allowed in new status	
+        all nextStatus: newStatus' | {
+            nextStatus.curStep = initStep 	-- only initStep allowed in new status	
+        }				
 	
 	all initStatus : newStatus' - sender.Attacker | {
                 initStatus.sender = initStatus.claimedAuth.User             -- claimed for themselves
@@ -261,14 +266,13 @@ transition[State] processState{
                 
 	}
 	newStatus' in status'
-	no finishedStatus' & status'
 	
 	-- constraints for status'
 	all nextStatus: status' - newStatus' | {
-              some curStatus: status {
-                      --synthesize[totalMessage, curStatus.sender.hasMessages]
-                      protocolExecution[nextStatus, curStatus, receivedMessages']
-	      } 
+              
+              no status & nextStatus => {some curStatus : status | {
+                   protocolExecution[nextStatus, curStatus, receivedMessages]
+              }} 
 	}
 
         -- constraints for sentMessages'
@@ -282,11 +286,16 @@ transition[State] processState{
         all alice: User | all bob: User | {
             one bob.(alice.authAs')
         }
-        all alice: (authAs' - authAs).User.User | all bob : User.(authAs' - authAs).User {
+
+        all curStatus : finishedStatus' | {
+            (curStatus.receiver)->(curStatus.claimedAuth.User)->(User.(curStatus.claimedAuth)) in authAs'
+        }
+
+        all alice : (authAs' - authAs).User.User | all bob: alice.(authAs' - authAs).User | all role: bob.(alice.(authAs' - authAs)) {
             some curStatus : finishedStatus' | {
                 alice = curStatus.receiver
-                bob = curStatus.claimedAuth.User
-                alice->bob->User.(curStatus.claimedAuth) in authAs'
+                bob = curStatus.sender
+                role = User.(curStatus.claimedAuth)
             }
         }
 	
@@ -324,12 +333,16 @@ pred success[authAs: User->(User->User)]{
 
 pred SuccessVerify{
     some curState : State | {
-         success[curState.authAs]
-         /*
-         some step: Step - initStep -initStep.nextStep - initStep.nextStep.nextStep | some curStatus: curState.status & sender.(User - Attacker) | {
-             curStatus.curStep = step
-         }
-         */
+         --success[curState.authAs]
+
+         some curState.finishedStatus
+         
+    }
+}
+
+pred NetworkPartition{
+    all curState : State | {
+        curState.sentMessages = curState.interceptedMessages
     }
 }
 
@@ -352,12 +365,16 @@ pred DefaultSetting{
         -- Stanger is just a signiture
         no Stranger & Status.sender 
         no Stranger & Status.receiver
+
+        no Attacker &  Status.sender 
+        no Attacker & Status.receiver
         Message =  EncryptedMessage + ComposedMessage + RandomMessage + Key
 }
 
 trace<|State, initState, processState, _|> authMachine {
-    DefaultSetting
+    DefaultSetting 
 }
 
-run <|authMachine|> {SuccessVerify}  for  exactly 5 User, exactly 5 Key, exactly 7 State, exactly 10 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message, exactly 20 NetworkFlow
-
+--run <|authMachine|> {SuccessVerify}  for  exactly 5 User, exactly 5 Key, exactly 7 State, exactly 10 Status, exactly 10 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message, exactly 20 NetworkFlow
+--run <|authMachine|> {SuccessVerify NetworkPartition}  for  exactly 5 User, exactly 5 Key, exactly 7 State, exactly 10 Status, exactly 10 EncryptedMessage, exactly 2 ComposedMessage, exactly 5 RandomMessage, exactly 18 Message, exactly 20 NetworkFlow
+check <|authMachine|> {Secure}  for  exactly 5 User, exactly 5 Key, exactly 9 State, exactly 20 Status, exactly 16 EncryptedMessage, exactly 4 ComposedMessage, exactly 5 RandomMessage, exactly 30 Message, exactly 30 NetworkFlow
